@@ -47,6 +47,8 @@
 
 static CPXPacket_t cpxRx;
 
+static volatile cpxAppMessageHandlerCallback_t appMessageHandlerCallback;
+
 #define WIFI_SET_SSID_CMD         0x10
 #define WIFI_SET_KEY_CMD          0x11
 
@@ -65,6 +67,40 @@ void cpxInitRoute(const CPXTarget_t source, const CPXTarget_t destination, const
     route->source = source;
     route->destination = destination;
     route->function = function;
+    route->version = CPX_VERSION;
+}
+
+bool cpxCheckVersion(const uint8_t version) {
+  static bool hasLoggedVersionMismatch = false;
+
+  // Version mismatch is generally handled by ignoring messages and logging the problem once.
+  // Asserting has turned out to be a bad idea as it prevents flashing new firmware in some cases.
+
+  const bool isVersionOk = (version == CPX_VERSION);
+
+  if (!isVersionOk) {
+    if (!hasLoggedVersionMismatch) {
+      DEBUG_PRINT("WARNING! CPX version mismatch. Got %i, require %i\n", version, CPX_VERSION);
+      hasLoggedVersionMismatch = true;
+    }
+  }
+
+  return isVersionOk;
+}
+
+void cpxRegisterAppMessageHandler(cpxAppMessageHandlerCallback_t callback) {
+  appMessageHandlerCallback = callback;
+}
+
+// Deepcopy from the received packet cpxRx to the provided packet
+void cpxGetRxPacket(CPXPacket_t* packet) {
+  packet->route.destination=cpxRx.route.destination;
+  packet->route.source=cpxRx.route.source;
+  packet->route.lastPacket=cpxRx.route.lastPacket;
+  packet->route.function=cpxRx.route.function;
+  packet->route.version=cpxRx.route.version;
+  packet->dataLength=cpxRx.dataLength;
+  memcpy(packet->data, cpxRx.data, cpxRx.dataLength);
 }
 
 static void cpx(void* _param) {
@@ -124,6 +160,11 @@ static void cpx(void* _param) {
           } else {
             cpxLinkSetConnected(true);
           }
+        }
+        break;
+      case CPX_F_APP:
+        if (appMessageHandlerCallback) {
+          appMessageHandlerCallback(&cpxRx);
         }
         break;
       default:
